@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "github-app-tutorial"
+version = "0.1.0"
+description = ""
+authors = ["sukhumarn <sukhumarn.a@gmail.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = "^0.115.12"
+uvicorn = "^0.34.0"
+python-multipart = "^0.0.20"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
