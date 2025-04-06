@@ -188,7 +188,7 @@ async def handle_pull_request_event(event_data: dict):
         if action in ["opened", "synchronize"]:
             diff = get_pr_diff(repo_name, pr_number)
         
-        print(diff)
+        logger.info(f"pr code diff: {diff}")
         
         return JSONResponse(
             status_code=200,
