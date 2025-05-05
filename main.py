@@ -3,14 +3,11 @@ from fastapi.responses import JSONResponse
 import hmac
 import hashlib
 import json
-from typing import Optional
+from typing import Optional, List, Dict
 import logging
-import requests  # Added for GitHub API calls
-from github import Github  # Added for GitHub API client
+import requests
+from github import Github
 import os
-
-from dotenv import load_dotenv
-load_dotenv()
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -23,8 +20,8 @@ app = FastAPI(
 )
 
 # Replace these with your actual secrets
-GITHUB_WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-GITHUB_ACCESS_TOKEN = os.getenv("GITHUB_ACCESS_TOKEN")
+GITHUB_WEBHOOK_SECRET = "your-webhook-secret-token-here"
+GITHUB_ACCESS_TOKEN = os.getenv("GITHUB_ACCESS_TOKEN", "your-github-access-token-here")
 
 # Initialize GitHub client
 github_client = Github(GITHUB_ACCESS_TOKEN)
@@ -42,9 +39,62 @@ def verify_signature(payload: bytes, signature: str, secret: str) -> bool:
     
     return hmac.compare_digest(expected_signature, signature)
 
-def get_pr_diff(repo_name: str, pr_number: int) -> str:
+def parse_diff_by_file(diff_text: str) -> List[Dict[str, str]]:
     """
-    Fetch the diff for a specific pull request
+    Parse the diff text and split it by file
+    Returns list of dicts with file name and its diff
+    """
+    if not diff_text:
+        return []
+
+    try:
+        result = []
+        current_file = None
+        current_diff = []
+        lines = diff_text.split('\n')
+
+        for line in lines:
+            # Check for new file diff start
+            if line.startswith('diff --git'):
+                # Save previous file diff if exists
+                if current_file and current_diff:
+                    result.append({
+                        "file": current_file,
+                        "pr_diff": '\n'.join(current_diff)
+                    })
+                
+                # Reset for new file
+                current_diff = [line]
+                
+                # Try to extract file name from next lines
+                for next_line in lines[lines.index(line):]:
+                    if next_line.startswith('--- a/'):
+                        current_file = next_line[6:]  # Remove '--- a/'
+                        break
+                    elif next_line.startswith('+++ b/'):
+                        current_file = next_line[6:]  # Remove '+++ b/'
+                        break
+            elif current_diff:  # Continue collecting diff lines
+                current_diff.append(line)
+
+        # Add the last file
+        if current_file and current_diff:
+            result.append({
+                "file": current_file,
+                "pr_diff": '\n'.join(current_diff)
+            })
+
+        return result
+    except Exception as e:
+        logger.error(f"Error parsing diff: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error parsing diff: {str(e)}"
+        )
+
+def get_pr_diff(repo_name: str, pr_number: int) -> List[Dict[str, str]]:
+    """
+    Fetch the diff for a specific pull request and split by file
     """
     try:
         repo = github_client.get_repo(repo_name)
@@ -62,7 +112,8 @@ def get_pr_diff(repo_name: str, pr_number: int) -> str:
         response = requests.get(diff_url, headers=headers)
         response.raise_for_status()
         
-        return response.text
+        # Parse the diff by file
+        return parse_diff_by_file(response.text)
     except Exception as e:
         logger.error(f"Error fetching PR diff: {str(e)}")
         raise HTTPException(
@@ -184,11 +235,9 @@ async def handle_pull_request_event(event_data: dict):
         logger.info(f"Pull request {action} #{pr_number} in {repo_name}")
         
         # Get the diff if the PR is opened or synchronized
-        diff = None
+        pr_diffs = []
         if action in ["opened", "synchronize"]:
-            diff = get_pr_diff(repo_name, pr_number)
-        
-        print(diff)
+            pr_diffs = get_pr_diff(repo_name, pr_number)
         
         return JSONResponse(
             status_code=200,
@@ -198,6 +247,7 @@ async def handle_pull_request_event(event_data: dict):
                 "action": action,
                 "pr_number": pr_number,
                 "pr_title": pr_title,
+                "pr_diffs": pr_diffs if pr_diffs else []
             }
         )
     except Exception as e:
